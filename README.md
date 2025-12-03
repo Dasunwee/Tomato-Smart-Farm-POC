@@ -81,6 +81,6 @@ The API is currently deployed live on Microsoft Azure App Service.
 
 ## 👤 Author
 
-- **Name**: [W.A.D.N Weerawardhana]
-- **Student ID**: [ITBNM-2211-0194]
+- **Name**: W.A.D.N Weerawardhana
+- **Student ID**: ITBNM-2211-0194
 - **Intake**: 11
