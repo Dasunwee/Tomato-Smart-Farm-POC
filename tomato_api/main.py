@@ -8,7 +8,7 @@ from PIL import Image
 import tensorflow as tf
 from ultralytics import YOLO
 from fastapi.responses import HTMLResponse
-
+import keras
 # Environment settings to keep logs clean
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -65,12 +65,36 @@ fruit_model = None
 # --- MODEL LOADING LOGIC ---
 
 def get_disease_model():
-    """Load the CNN model only when needed (Lazy Loading)"""
     global disease_model
     if disease_model is None:
-        print("[SYSTEM] Loading Tomato Disease Model...")
-        # Load the .keras file
-        disease_model = tf.keras.models.load_model("best_tomato_model_V2.keras", compile=False)
+        print("[SYSTEM] Reconstructing Model Architecture...")
+        
+        # 1. MobileNetV2 හි හිස් ව්‍යුහය (Base Structure) ගොඩනැගීම
+        base_model = tf.keras.applications.MobileNetV2(
+            input_shape=(224, 224, 3), 
+            include_top=False, 
+            weights=None
+        )
+        
+        # 2. ඔයාගේ මොඩල් එකේ තිබ්බ Head එක ආයේ එකතු කිරීම
+        inputs = tf.keras.Input(shape=(224, 224, 3))
+        x = base_model(inputs)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = tf.keras.layers.Dense(512, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.4)(x)
+        x = tf.keras.layers.Dense(256, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.3)(x)
+        outputs = tf.keras.layers.Dense(10, activation='softmax')(x)
+        
+        disease_model = tf.keras.Model(inputs, outputs)
+        
+        # 3. දැන් මේකට ඔයාගේ පරණ Weights ටික load කරන්න
+        try:
+            disease_model.load_weights("best_tomato_model_V2.keras")
+            print("[SYSTEM] Weights loaded successfully!")
+        except Exception as e:
+            print(f"[ERROR] Weights loading failed: {e}")
+            
     return disease_model
 
 def get_fruit_model():
@@ -81,7 +105,7 @@ def get_fruit_model():
         fruit_model = YOLO("yolo_model.pt")
     return fruit_model
 
-# Target labels for the 10 disease categories [cite: 1]
+# Target labels for the 10 disease categories
 DISEASE_CLASSES = [
     'Tomato___Bacterial_spot', 'Tomato___Early_blight', 'Tomato___Late_blight', 
     'Tomato___Leaf_Mold', 'Tomato___Septoria_leaf_spot', 
@@ -89,6 +113,20 @@ DISEASE_CLASSES = [
     'Tomato___Tomato_Yellow_Leaf_Curl_Virus', 'Tomato___Tomato_mosaic_virus', 
     'Tomato___healthy'
 ]
+
+# --- DISEASE TREATMENT RECOMMENDATIONS ---
+TREATMENT_RECOMMENDATIONS = {
+    'Tomato___Bacterial_spot': "Apply copper-based fungicides. Avoid overhead watering.",
+    'Tomato___Early_blight': "Prune infected lower leaves. Apply Mancozeb or Copper-based fungicides.",
+    'Tomato___Late_blight': "Remove infected plants immediately. Apply Chlorothalonil fungicides.",
+    'Tomato___Leaf_Mold': "Improve air circulation. Reduce humidity. Apply appropriate fungicides.",
+    'Tomato___Septoria_leaf_spot': "Remove infected leaves. Water at the base. Apply fungicides.",
+    'Tomato___Spider_mites Two-spotted_spider_mite': "Apply Neem oil or insecticidal soaps. Wash plants with water.",
+    'Tomato___Target_Spot': "Ensure good airflow. Avoid overhead watering. Apply fungicides.",
+    'Tomato___Tomato_Yellow_Leaf_Curl_Virus': "Control whiteflies using insecticidal soap or Neem oil. Remove infected plants.",
+    'Tomato___Tomato_mosaic_virus': "No cure. Remove and destroy infected plants. Disinfect gardening tools.",
+    'Tomato___healthy': "Plant is healthy! Maintain regular watering and balanced NPK fertilizer."
+}
 
 # --- IMAGE PROCESSING HELPERS ---
 
@@ -120,25 +158,35 @@ async def analyze_plant(file: UploadFile = File(...), scan_type: ScanType = Form
     pil_image = Image.open(io.BytesIO(contents)).convert('RGB')
 
     if scan_type.value == "leaf":
+        print("DEBUG: Leaf Scan Initiated")
         model = get_disease_model()
+        print("DEBUG: Model Loaded")
         
         if not is_it_green_leaf(pil_image):
             return {"status": "Failed", "error": "The image does not look like a green leaf."}
 
         # Preprocessing: Resize to 224x224 and Normalize
+        print("DEBUG: Preprocessing Image")
         img_array = np.array(pil_image.resize((224, 224))) / 255.0 
         img_array = np.expand_dims(img_array, 0).astype(np.float32)
 
         # Predict
+        print("DEBUG: Making Prediction")
         preds = model.predict(img_array)
         conf = float(np.max(preds[0]))
         label = DISEASE_CLASSES[np.argmax(preds[0])]
+        print(f"DEBUG: Predicted Label: {label}")
+
+        # --- New Part V4 ---
+        # Dictionary used labels to provide specific treatment recommendations
+        recommended_treatment = TREATMENT_RECOMMENDATIONS.get(label, "Consult an agricultural expert for advice.")
 
         return {
             "analysis_type": "leaf",
             "status": label,
             "confidence": f"{conf*100:.1f}%",
-            "is_healthy": "healthy" in label.lower()
+            "is_healthy": "healthy" in label.lower(),
+            "treatment": recommended_treatment # New Output Field
         }
 
     elif scan_type.value == "fruit":

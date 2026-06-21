@@ -6,3 +6,4 @@ ultralytics
 pillow
 numpy
 opencv-python
+keras==2.15.0
